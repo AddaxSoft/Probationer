@@ -1,0 +1,121 @@
+#!/usr/bin/python
+import sys
+import os
+import time
+import atexit
+import syslog
+import subprocess
+import argparse
+
+
+def Loger(msg, error=False):
+	if error:	
+		syslog.syslog(syslog.LOG_ERR, "Probationer - ERROR:" + msg)
+		sys.exit("/!\\ - " + msg)
+	else:
+		print("[+] - " + msg)	
+		syslog.syslog("Probationer - INFO:" + msg)
+#end of function ----------------------------------------------------------------------------------------------
+
+def goodbye(monInterface):
+	Loger("Cleaning up:")
+	Loger("putting interface "+monInterface+" back to normal mode ...")
+	os.system("airmon-ng stop "+monInterface + "> /dev/null 2>&1")
+	Loger("killing VLC processes ...")
+	os.system("pkill vlc > /dev/null 2>&1") #cleaning up vlc instants created by us.
+#end of function ----------------------------------------------------------------------------------------------
+
+
+
+parser = argparse.ArgumentParser(description='', formatter_class=argparse.RawTextHelpFormatter)
+
+parser.add_argument('-i', '--interface', help='set interface to be used in monitor mode. eg: wlan0', metavar='<Wifi>')
+parser.add_argument('-ip', '--dev_ip', help='IP address of the device you want to monitor', metavar='<ip_addr>')
+parser.add_argument('-dm', '--dev_mac', help='MAC address of the device you want to monitor - not required if flagged with just_warning', metavar='<dev-MAC>')
+parser.add_argument('-am', '--ap_mac', help='MAC address of the access point to disconnect the device from.', metavar='<AP-MAC>')
+parser.add_argument('-int', '--interval', type=int, help='number of mints to wait between checks', metavar='<interval>')
+parser.add_argument('-jw', '--just_warning', default=False, action='store_true', help='Just a warning or send actual de-auth packets to AP')
+
+args = parser.parse_args()
+if (args.just_warning):
+	#This is just a warning - no need to have a DMAC, AMAC, or Interface
+	if(args.dev_ip == None or args.interval == None):
+		parser.error('Not enough arguments were provided, quitting...')
+else:
+	if (args.interface == None or args.dev_ip == None or args.dev_mac == None or args.interval == None):
+		parser.error('Not enough arguments were provided, quitting...')
+
+#variables:
+if args.interval > 0:
+	probationInterval = int(args.interval/4)*60
+else:
+	probationInterval = 15*60
+	probationTime = 0
+
+monInterface = "mon" + args.interface[-1]
+atexit.register(goodbye, monInterface)
+
+
+
+#check if itnerval is correct
+while ((args.interval < 0) or (args.interval > 1440)):
+	args.interval = int(raw_input("Interval is wrong. Enter number between 0, 1440.:"))
+
+j = 0
+
+while True:
+	Loger("Starting a new check routine ...")
+	Loger("Checking if device is online ...")
+	
+	if (os.system("ping -c 1 " + args.dev_ip + " > /dev/null 2>&1") != 0):
+		Loger("Device is already offline ... sleeping Zzz")
+		time.sleep(60*j); j += 1
+		continue
+	
+	Loger("Device is online ...")
+	Loger("Checking time ...")
+	nextTime=time.time()+(args.interval*60)
+	while ( time.time() < nextTime ): #repeat until we reach args.interval
+		Loger("Still didn't reach threshold ... sleeping for %d mint(s) Zzz..Zzz..." % args.interval)
+		time.sleep(args.interval*60); #wait for a mint and re-check
+	
+	
+	if (os.system("ping -c 1 " + args.dev_ip + " > /dev/null 2>&1") != 0):
+		Loger("We reached threshold but device is offline ... sleeping Zzz")
+		time.sleep(60)
+		continue
+	
+	#ps3 is alive and we reached threshold of args.interval
+	#play warning sound and wait for 5 mints
+	Loger('*** We reached threshold ***')
+	for i in range(0,5):
+		Loger("--- Sending Warning number:%s *sound*" % str(i+1))
+		sys.stdout.write("\a")
+		p = subprocess.Popen(['vlc', 'warning.mp3'],stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+		time.sleep(60)
+	#kill vlc window
+	p.terminate()
+	j = 0
+	#if justwarning flag is set than don't discconect the device.
+	if args.just_warning: 
+		Loger("Working on warning mode only - nothing will happen else than playing warning sounds")
+		continue
+	
+	#put interface into monitor mode:
+	#--1 check if it was already put
+	if (os.popen("ifconfig | grep '%s' | awk '{print $1}'" % monInterface).read() == ""):
+		#interface is NOT in mon-mode - so, put interface in monitor mode
+		Loger("puting %s in monitor mode!" % args.interface)
+		if (os.system("airmon-ng start %s > /dev/null 2>&1" % args.interface) != 0):
+			#we failed -- quit with error.
+			Loger("Failed to put %s in monitor mode. Does your interface support monitor mode? is airmon-ng installed? -- Quiting...", )	
+	#monitor mode is ON -- send deauth packets
+	Loger("%s is on the monitor mode" % monInterface)
+	Loger("sending deAuth packets now!")
+	probationTime = time.time()
+	while(time.time()-probationTime <= probationInterval): #repeat until we are out of interval
+		Loger("\aSending deAuth packets - Probation time left is: %d" % int(probationInterval-(time.time()-probationTime)/60))
+		if (os.system("ping -c 1 " + args.dev_ip + "> /dev/null 2>&1") == 0):
+			os.system("aireplay-ng -0 25 -a %s -c %s %s > /dev/null 2>&1" % (args.ap_mac, args.dev_mac, monInterface))
+			time.sleep(30)
+#end of main while-------------------------------------------------------------------------------------------------------------------
